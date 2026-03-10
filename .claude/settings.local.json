@@ -1,10 +1,11 @@
 {
-  "enabledPlugins": {
-    "superpowers@superpowers-marketplace": true
-  },
   "permissions": {
     "allow": [
-      "mcp__fast-context__extract_windsurf_key"
+      "mcp__fast-context__extract_windsurf_key",
+      "mcp__fast-context__fast_context_search"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true
   }
 }

@@ -1,14 +1,14 @@
-# STS2 AI Agent Mod - 最小 HTTP API 协议 v0
+# STS2 AI Agent Mod HTTP API
 
 状态：草案，可实现  
-版本：`2026-03-10-v0`
+协议版本：`2026-03-10-v0`
 
 ## 约束
 
 - 协议基于 `HTTP + JSON`
 - 默认监听 `http://127.0.0.1:8080`
 - 响应类型固定为 `application/json; charset=utf-8`
-- 新增字段必须向后兼容，不删除已有字段
+- 新增字段必须向后兼容，不删除既有字段
 
 ## 通用响应
 
@@ -104,12 +104,22 @@
 | `screen` | string | 当前逻辑界面 |
 | `in_combat` | boolean | 是否处于战斗流程 |
 | `turn` | number or null | 当前回合数 |
-| `available_actions` | string[] | 当前可执行动作名称 |
+| `available_actions` | string[] | 当前可执行动作名 |
+| `run.gold` | number or null | 当前金币 |
 | `run.deck` | object[] or null | 当前牌库 |
 | `run.relics` | object[] or null | 当前遗物 |
-| `run.gold` | number or null | 当前金币 |
+| `run.potions` | object[] or null | 当前药水槽 |
+| `map.current_node` | object or null | 当前地图坐标 |
+| `map.available_nodes` | object[] or null | 当前这一步可走节点 |
+| `map.rows` | number or null | 地图总行数 |
+| `map.cols` | number or null | 地图总列数 |
+| `map.starting_node` | object or null | 地图起点 |
+| `map.boss_node` | object or null | Boss 节点 |
+| `map.second_boss_node` | object or null | 双 Boss Act 的第二个 Boss 节点 |
+| `map.nodes` | object[] or null | 完整地图图结构，含父子连线 |
+| `reward.rewards` | object[] | 奖励按钮列表 |
 | `reward.card_options` | object[] | 卡牌奖励候选 |
-| `reward.alternatives` | object[] | 卡牌奖励替代操作，例如跳过 |
+| `reward.alternatives` | object[] | 卡牌奖励替代动作，例如跳过 |
 | `selection.cards` | object[] or null | 牌库选牌界面候选 |
 
 ### 战斗示例
@@ -148,6 +158,54 @@
           "relic_id": "BURNING_BLOOD",
           "name": "燃烧之血",
           "is_melted": false
+        }
+      ]
+    }
+  }
+}
+```
+
+### 地图示例
+
+```json
+{
+  "ok": true,
+  "request_id": "req_20260310_0008",
+  "data": {
+    "screen": "MAP",
+    "available_actions": [
+      "choose_map_node"
+    ],
+    "map": {
+      "current_node": { "row": 1, "col": 3 },
+      "starting_node": { "row": 0, "col": 3 },
+      "boss_node": { "row": 14, "col": 3 },
+      "second_boss_node": null,
+      "rows": 15,
+      "cols": 7,
+      "available_nodes": [
+        {
+          "index": 0,
+          "row": 2,
+          "col": 2,
+          "node_type": "Monster",
+          "state": "Travelable"
+        }
+      ],
+      "nodes": [
+        {
+          "row": 1,
+          "col": 3,
+          "node_type": "Monster",
+          "state": "Traveled",
+          "visited": true,
+          "is_current": true,
+          "is_available": false,
+          "is_start": false,
+          "is_boss": false,
+          "is_second_boss": false,
+          "parents": [{ "row": 0, "col": 3 }],
+          "children": [{ "row": 2, "col": 2 }]
         }
       ]
     }
@@ -228,6 +286,7 @@
 - `play_card.requires_target` 固定为 `false`，因为是否需要目标取决于具体卡牌
 - 调用方必须结合 `GET /state` 中 `combat.hand[index].requires_target` 决定是否传 `target_index`
 - `choose_map_node` 使用 `option_index` 选择 `map.available_nodes[index]`
+- 路线规划应基于 `map.nodes` 的全图父子连线；`map.available_nodes` 只用于执行当前一步
 - `choose_reward_card` 使用 `option_index` 选择 `reward.card_options[index]`
 - `claim_reward` 使用 `option_index` 选择 `reward.rewards[index]`
 - `select_deck_card` 使用 `option_index` 选择 `selection.cards[index]`
@@ -293,7 +352,7 @@
 - 前提：当前 `screen = "REWARD"`
 - 参数：无
 - 行为：自动收取奖励，遇到卡牌奖励默认选第一张，并在可继续时点击继续
-- 说明：适合无人值守推进，不适合构筑决策
+- 说明：适合无人值守推进，不适合作为构筑决策接口
 
 ### `proceed`
 
