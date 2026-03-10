@@ -195,6 +195,7 @@ uv run sts2-mcp-server
 - [roadmap-current.md](/C:/Users/chart/Documents/project/sp/docs/roadmap-current.md)
 - [phase-4c-shop.md](/C:/Users/chart/Documents/project/sp/docs/phase-4c-shop.md)
 - [phase-5-full-chain.md](/C:/Users/chart/Documents/project/sp/docs/phase-5-full-chain.md)
+- [phase-6-validation-template.md](/C:/Users/chart/Documents/project/sp/docs/phase-6-validation-template.md)
 - [mcp_server/README.md](/C:/Users/chart/Documents/project/sp/mcp_server/README.md)
 
 通过标准：
@@ -216,6 +217,7 @@ uv run sts2-mcp-server
 - [ ] Modal / FTUE 不再阻塞自动流程
 - [ ] Game Over 可正确收尾
 - [ ] 文档已同步
+- [ ] 已产出一份完整的 Phase 6 实机记录
 - [ ] 已记录已知限制与剩余风险
 
 如果其中任何一项失败，就还不能叫“正式发布完成”，笨蛋。
