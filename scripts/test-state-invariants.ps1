@@ -112,20 +112,22 @@ if ($null -ne $state.shop) {
         Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "close_shop_inventory" -Reason "shop.can_close=true"
     }
 
-    if (@($state.shop.cards | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
-        Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_card" -Reason "shop.cards[] has purchasable entries"
-    }
+    if ($state.shop.is_open) {
+        if (@($state.shop.cards | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_card" -Reason "shop.is_open=true and shop.cards[] has purchasable entries"
+        }
 
-    if (@($state.shop.relics | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
-        Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_relic" -Reason "shop.relics[] has purchasable entries"
-    }
+        if (@($state.shop.relics | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_relic" -Reason "shop.is_open=true and shop.relics[] has purchasable entries"
+        }
 
-    if (@($state.shop.potions | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
-        Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_potion" -Reason "shop.potions[] has purchasable entries"
-    }
+        if (@($state.shop.potions | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_potion" -Reason "shop.is_open=true and shop.potions[] has purchasable entries"
+        }
 
-    if ($null -ne $state.shop.card_removal -and $state.shop.card_removal.available -and $state.shop.card_removal.enough_gold -and (-not $state.shop.card_removal.used)) {
-        Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "remove_card_at_shop" -Reason "shop.card_removal is available and affordable"
+        if ($null -ne $state.shop.card_removal -and $state.shop.card_removal.available -and $state.shop.card_removal.enough_gold -and (-not $state.shop.card_removal.used)) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "remove_card_at_shop" -Reason "shop.is_open=true and shop.card_removal is available and affordable"
+        }
     }
 }
 
@@ -171,14 +173,24 @@ if ($state.in_combat -and $null -ne $state.combat) {
     if (@($state.combat.hand | Where-Object { $_.playable }).Count -gt 0) {
         Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "play_card" -Reason "combat.hand[] has playable cards"
     }
+}
 
-    if (@($state.run.potions | Where-Object { $_.can_use }).Count -gt 0) {
-        Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "use_potion" -Reason "run.potions[] has usable entries"
-    }
+if (@($state.run.potions | Where-Object { $_.can_use }).Count -gt 0) {
+    Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "use_potion" -Reason "run.potions[] has usable entries"
 }
 
 if (@($state.run.potions | Where-Object { $_.can_discard }).Count -gt 0) {
     Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "discard_potion" -Reason "run.potions[] has discardable entries"
+}
+
+foreach ($potion in @($state.run.potions)) {
+    if ($null -eq $potion -or -not $potion.occupied) {
+        continue
+    }
+
+    if ($potion.target_type -eq "TargetedNoCreature" -and $potion.requires_target) {
+        $failures.Add("potion '$($potion.potion_id)' should not require target_index when target_type=TargetedNoCreature")
+    }
 }
 
 $summary = [pscustomobject]@{

@@ -22,6 +22,7 @@ Do not assume an action succeeded just because the tool returned `completed`; al
 - Card rewards: `skip_reward_cards` dismisses the card-choice overlay, but the underlying reward may still remain claimable. Re-read state after skipping.
 - Rest sites: use `choose_rest_option`; if smithing opens `CARD_SELECTION`, finish it with `select_deck_card`, then `proceed`.
 - Shops: first `open_shop_inventory`; leave the inner inventory with `close_shop_inventory`; leave the room with `proceed`.
+- Potions: if `run.potions[*].can_use = true`, `use_potion` should be callable even outside combat. `TargetedNoCreature` potions do not need `target_index`.
 - Chests: `open_chest`, then `choose_treasure_relic`, then `proceed`.
 - Main menu: prefer `continue_run` if resuming, otherwise `open_character_select`.
 - Timeline gate: if `open_timeline` is available, finish timeline interactions before trying to start a run.

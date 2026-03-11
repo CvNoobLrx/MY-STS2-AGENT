@@ -2491,12 +2491,7 @@ internal static class GameActionService
         return potion.TargetType switch
         {
             TargetType.AnyEnemy => ResolvePotionEnemyTarget(request, combatState, potion),
-            TargetType.TargetedNoCreature => throw new ApiException(409, "invalid_action", "This potion target type is not supported yet.", new
-            {
-                action = "use_potion",
-                potion_id = potion.Id.Entry,
-                target_type = potion.TargetType.ToString()
-            }),
+            TargetType.TargetedNoCreature => null,
             _ => potion.Owner.Creature
         };
     }

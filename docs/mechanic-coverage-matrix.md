@@ -28,7 +28,7 @@ The remaining risk is mechanic breadth, especially around rare card/relic/event 
 | Rest semantics | `HEAL`, `SMITH`, return to room, leave room | High | Both major branches validated live | Rare relic-driven rest options still need sampling |
 | Chest semantics | open chest, relic choice, leave room | High | Full chest chain validated live | Multi-choice chest edge cases need future checks if added |
 | Event semantics | normal options, finished proceed, nested combat | High | `NEOW` and nested combat event flow validated live | More mutation-heavy events should be sampled |
-| Potion lifecycle | use potion, discard potion, empty slots | Medium | Core use/discard flows validated | Targeted, queued, and full-belt replacement behaviors need more coverage |
+| Potion lifecycle | use potion, discard potion, empty slots, `TargetedNoCreature` semantics | Medium | Core use/discard flows validated; `FOUL_POTION` shop use was revalidated after the MCP stopped mislabeling it as a required-target potion | Queued and full-belt replacement behaviors need more coverage |
 | Dynamic energy cost | combat-time cost changes, temporary discounts | Medium | `Bullet Time` was validated live | Cost increases, generated cards, and cross-turn resets need broader coverage |
 | Star resource / star cost | Regent stars, fixed star cost, star-X cost | High | `Falling Star` and `Stardust` validated; `star_costs_x` gap was fixed | More Regent-only interactions should be sampled |
 | Unplayable reasons | insufficient energy, insufficient stars | Medium | `not_enough_stars` was validated | Other reasons need explicit sampling and naming review |

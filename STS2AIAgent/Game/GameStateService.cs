@@ -2081,8 +2081,7 @@ internal static class GameStateService
     {
         return potion.TargetType == TargetType.AnyEnemy ||
             potion.TargetType == TargetType.AnyPlayer ||
-            potion.TargetType == TargetType.AnyAlly ||
-            potion.TargetType == TargetType.TargetedNoCreature;
+            potion.TargetType == TargetType.AnyAlly;
     }
 
     private static bool IsPotionTargetSupported(CombatState? combatState, Player player, PotionModel potion)
@@ -2090,7 +2089,7 @@ internal static class GameStateService
         return potion.TargetType switch
         {
             TargetType.AnyEnemy => combatState != null && combatState.Enemies.Any(enemy => enemy.IsAlive),
-            TargetType.TargetedNoCreature => false,
+            TargetType.TargetedNoCreature => true,
             _ => true
         };
     }

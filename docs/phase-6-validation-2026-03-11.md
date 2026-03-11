@@ -45,6 +45,10 @@ test-debug-console-gating.ps1: disabled -> invalid_action, enabled -> completed
 - Entered combat, played through combat state transitions, and used `run_console_command "win"` to accelerate validation
 - `use_potion` was validated in real combat earlier in the session
 - `discard_potion` remained available and state updates were consistent across non-combat rooms
+- `FOUL_POTION` was revalidated in `SHOP` after a protocol fix:
+  - before the fix, the payload incorrectly exposed `requires_target = true` and hid `use_potion`
+  - after the fix, `TargetedNoCreature` potions no longer require `target_index`
+  - live `use_potion` in `SHOP` succeeded and removed the potion from the belt
 
 ### Dynamic combat metadata
 
@@ -70,6 +74,12 @@ test-debug-console-gating.ps1: disabled -> invalid_action, enabled -> completed
 - `scripts/test-state-invariants.ps1` was added as a lightweight payload/action drift check
 - It passed on both `MAIN_MENU` and `REWARD` during the latest follow-up validation
 - The reward-screen run also confirmed that `reward.can_proceed = true` now implies MCP-side `proceed`
+- The script now also guards potion semantics:
+  - any usable potion, including non-combat potions, must expose `use_potion`
+  - `TargetedNoCreature` potions must not report `requires_target = true`
+ - The script also now respects the shop's two-layer model:
+   - closed shop room: `open_shop_inventory` is expected, but `buy_*` actions are not
+   - open merchant inventory: `buy_*` / `remove_card_at_shop` are expected when the payload is affordable
 
 ### Reward flow
 
