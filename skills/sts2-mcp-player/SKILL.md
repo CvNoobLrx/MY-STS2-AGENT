@@ -12,9 +12,14 @@ Use this skill when driving the STS2 MCP mod as a gameplay agent or when validat
 1. Call `health_check` once at session start.
 2. Prefer the guided tool surface: `health_check`, `get_game_state`, `get_available_actions`, `act`.
 3. Before every decision, call `get_game_state`.
-4. Only invoke actions that are present in `available_actions`.
+4. Route by `state.session` first:
+   `session.mode` distinguishes `singleplayer` vs `multiplayer`, and
+   `session.phase` distinguishes `menu`, `character_select`,
+   `multiplayer_lobby`, and `run`.
+5. Only invoke actions that are present in `available_actions`.
 5. After every action, inspect the returned `state`; if needed, fetch fresh state again before the next step.
-6. Recompute indexes from fresh payloads every time. Never reuse stale hand, node, reward, or selection indexes.
+6. Treat multiplayer as local-player control only. Never invent teammate actions that are not present in the latest state.
+7. Recompute indexes from fresh payloads every time. Never reuse stale hand, node, reward, or selection indexes.
 
 Do not trust memory over the current payload. The game mutates screens in place, overlays replace rooms, and some actions complete only after a follow-up state transition.
 
@@ -29,6 +34,7 @@ For validation flows, read [references/debug-and-validation.md](references/debug
 ## Non-Negotiable State Rules
 
 - Treat `UNKNOWN` as transient only once. Re-read state once; if it persists, stop guessing and inspect the payload.
+- Treat `state.session` as the source of truth for singleplayer vs multiplayer. Do not infer mode from screen names or tool names alone.
 - Resolve overlays before room flow. `MODAL`, `CARD_SELECTION`, reward-card overlays, and timeline overlays take priority over map or combat planning.
 - Treat `pending` responses as an instruction to stay inside the returned screen flow.
 - Treat `proceed` as a room action, not a universal fallback.
@@ -37,6 +43,7 @@ For validation flows, read [references/debug-and-validation.md](references/debug
 
 - `MAIN_MENU`: prefer `continue_run`; if unavailable, finish timeline gates or start a run from `open_character_select`.
 - `CHARACTER_SELECT`: choose an unlocked character, wait for `can_embark = true`, then `embark`.
+- `MULTIPLAYER_LOBBY`: stay on the same compact tool surface; use `available_actions` for `host_multiplayer_lobby`, `join_multiplayer_lobby`, `select_character`, `ready_multiplayer_lobby`, or `disconnect_multiplayer_lobby`.
 - `MAP`: use `choose_map_node`.
 - `COMBAT`: stay inside combat actions unless a selection overlay interrupts.
 - `REWARD`: prefer `collect_rewards_and_proceed` unless making deliberate reward choices.
@@ -53,6 +60,7 @@ For detailed per-screen sequences and pitfalls, read [references/screen-playbook
 - `skip_reward_cards` closes the overlay but may leave the underlying reward item claimable.
 - Multi-select overlays may require `confirm_selection`; do not assume one click is enough.
 - Potion targeting depends on `target_type`; some potions need no `target_index`.
+- Multiplayer targeting still controls only the local player. Use `target_index_space` and `valid_target_indices`; never assume teammate control.
 - `shop.is_open = true` means inner inventory, not room completion.
 - Timeline gates can block run start until the overlay is confirmed or the submenu is closed.
 

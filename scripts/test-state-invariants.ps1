@@ -152,6 +152,27 @@ foreach ($actionName in @($state.available_actions)) {
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
 
+if ($null -eq $state.session) {
+    $failures.Add("state.session should always be populated")
+}
+else {
+    $sessionMode = [string]$state.session.mode
+    $sessionPhase = [string]$state.session.phase
+    $controlScope = [string]$state.session.control_scope
+
+    if (@("singleplayer", "multiplayer") -notcontains $sessionMode) {
+        $failures.Add("state.session.mode should be 'singleplayer' or 'multiplayer'")
+    }
+
+    if (@("menu", "character_select", "multiplayer_lobby", "run") -notcontains $sessionPhase) {
+        $failures.Add("state.session.phase should be one of menu, character_select, multiplayer_lobby, run")
+    }
+
+    if ($controlScope -ne "local_player") {
+        $failures.Add("state.session.control_scope should stay 'local_player'")
+    }
+}
+
 foreach ($actionName in $stateActionSet) {
     if (-not $actionSet.Contains($actionName)) {
         $failures.Add("state.available_actions contains '$actionName' but /actions/available does not")
@@ -342,6 +363,15 @@ if ($null -ne $state.shop) {
 }
 
 if ($null -ne $state.character_select) {
+    if ($state.session.phase -ne "character_select") {
+        $failures.Add("state.character_select is populated but state.session.phase is '$($state.session.phase)' instead of 'character_select'")
+    }
+
+    $expectedCharacterSelectMode = if ([bool]$state.character_select.is_multiplayer) { "multiplayer" } else { "singleplayer" }
+    if ($state.session.mode -ne $expectedCharacterSelectMode) {
+        $failures.Add("state.session.mode should match character_select.is_multiplayer")
+    }
+
     if (@($state.character_select.characters | Where-Object { -not $_.is_locked }).Count -gt 0) {
         Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "select_character" -Reason "character_select has unlocked choices"
     }
@@ -381,6 +411,103 @@ if ($null -ne $state.character_select) {
     if ($localCharacterPlayer.Count -eq 1 -and [bool]$state.character_select.local_ready -ne [bool]$localCharacterPlayer[0].is_ready) {
         $failures.Add("character_select.local_ready should match the local player roster entry")
     }
+}
+
+if ($null -ne $state.multiplayer_lobby) {
+    if ($state.session.mode -ne "multiplayer") {
+        $failures.Add("multiplayer_lobby payload is populated but state.session.mode is not 'multiplayer'")
+    }
+
+    if ($state.session.phase -ne "multiplayer_lobby") {
+        $failures.Add("multiplayer_lobby payload is populated but state.session.phase is '$($state.session.phase)' instead of 'multiplayer_lobby'")
+    }
+
+    if ($state.screen -ne "MULTIPLAYER_LOBBY") {
+        $failures.Add("multiplayer_lobby payload is populated but state.screen is '$($state.screen)' instead of 'MULTIPLAYER_LOBBY'")
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$state.multiplayer_lobby.net_game_type)) {
+        $failures.Add("multiplayer_lobby.net_game_type should be populated")
+    }
+
+    if ([int]$state.multiplayer_lobby.join_port -le 0) {
+        $failures.Add("multiplayer_lobby.join_port should be a positive integer")
+    }
+
+    if (@($state.multiplayer_lobby.characters).Count -eq 0) {
+        $failures.Add("multiplayer_lobby.characters should not be empty")
+    }
+
+    if ($state.multiplayer_lobby.has_lobby) {
+        if ([int]$state.multiplayer_lobby.player_count -ne @($state.multiplayer_lobby.players).Count) {
+            $failures.Add("multiplayer_lobby.player_count should match multiplayer_lobby.players.Count when has_lobby=true")
+        }
+
+        if ([int]$state.multiplayer_lobby.max_players -gt 0 -and [int]$state.multiplayer_lobby.player_count -gt [int]$state.multiplayer_lobby.max_players) {
+            $failures.Add("multiplayer_lobby.player_count should not exceed multiplayer_lobby.max_players")
+        }
+
+        if (@($state.multiplayer_lobby.players).Count -gt 0) {
+            Test-PlayerSummaries -Failures $failures -Players @($state.multiplayer_lobby.players) -Label "multiplayer_lobby.players" -ExpectedCount ([int]$state.multiplayer_lobby.player_count)
+        }
+
+        $localLobbyPlayer = @($state.multiplayer_lobby.players | Where-Object { $_.is_local } | Select-Object -First 1)
+        if ($localLobbyPlayer.Count -eq 1 -and [bool]$state.multiplayer_lobby.local_ready -ne [bool]$localLobbyPlayer[0].is_ready) {
+            $failures.Add("multiplayer_lobby.local_ready should match the local multiplayer_lobby.players entry")
+        }
+
+        Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "select_character" -Reason "multiplayer_lobby has active character options"
+
+        if ($state.multiplayer_lobby.can_ready) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "ready_multiplayer_lobby" -Reason "multiplayer_lobby.can_ready=true"
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "unready" -Reason "multiplayer_lobby.can_ready=true should suppress unready"
+        }
+        elseif ($state.multiplayer_lobby.can_unready) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "unready" -Reason "multiplayer_lobby.can_unready=true"
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "ready_multiplayer_lobby" -Reason "multiplayer_lobby.can_unready=true should suppress ready_multiplayer_lobby"
+        }
+        else {
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "ready_multiplayer_lobby" -Reason "multiplayer_lobby cannot ready right now"
+        }
+
+        if ($state.multiplayer_lobby.can_disconnect) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "disconnect_multiplayer_lobby" -Reason "multiplayer_lobby.can_disconnect=true"
+        }
+        else {
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "disconnect_multiplayer_lobby" -Reason "multiplayer_lobby.can_disconnect=false"
+        }
+
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "host_multiplayer_lobby" -Reason "multiplayer_lobby.has_lobby=true should suppress host action"
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "join_multiplayer_lobby" -Reason "multiplayer_lobby.has_lobby=true should suppress join action"
+    }
+    else {
+        if ([int]$state.multiplayer_lobby.player_count -ne 0) {
+            $failures.Add("multiplayer_lobby.player_count should be 0 when has_lobby=false")
+        }
+
+        if (@($state.multiplayer_lobby.players).Count -ne 0) {
+            $failures.Add("multiplayer_lobby.players should be empty when has_lobby=false")
+        }
+
+        if ($state.multiplayer_lobby.can_host) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "host_multiplayer_lobby" -Reason "multiplayer_lobby.can_host=true"
+        }
+
+        if ($state.multiplayer_lobby.can_join) {
+            Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "join_multiplayer_lobby" -Reason "multiplayer_lobby.can_join=true"
+        }
+
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "ready_multiplayer_lobby" -Reason "multiplayer_lobby.has_lobby=false"
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "disconnect_multiplayer_lobby" -Reason "multiplayer_lobby.has_lobby=false"
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "unready" -Reason "multiplayer_lobby.has_lobby=false"
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "select_character" -Reason "multiplayer_lobby.has_lobby=false"
+    }
+}
+else {
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "host_multiplayer_lobby" -Reason "multiplayer_lobby payload is absent"
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "join_multiplayer_lobby" -Reason "multiplayer_lobby payload is absent"
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "ready_multiplayer_lobby" -Reason "multiplayer_lobby payload is absent"
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "disconnect_multiplayer_lobby" -Reason "multiplayer_lobby payload is absent"
 }
 
 if ($null -ne $state.timeline) {
@@ -585,6 +712,10 @@ if ($null -ne $state.run) {
 }
 
 if ($null -ne $state.multiplayer) {
+    if ($state.session.mode -ne "multiplayer") {
+        $failures.Add("multiplayer payload is populated but state.session.mode is not 'multiplayer'")
+    }
+
     if (-not $state.multiplayer.is_multiplayer) {
         $failures.Add("multiplayer payload should only be present when is_multiplayer=true")
     }
@@ -600,6 +731,9 @@ if ($null -ne $state.multiplayer) {
     if ([string]::IsNullOrWhiteSpace([string]$state.multiplayer.local_player_id)) {
         $failures.Add("multiplayer.local_player_id should be populated")
     }
+}
+elseif ($state.session.mode -ne "singleplayer" -and $state.session.phase -ne "multiplayer_lobby") {
+    $failures.Add("state.session.mode should only stay 'multiplayer' without multiplayer payload during the multiplayer_lobby phase")
 }
 
 $summary = [pscustomobject]@{

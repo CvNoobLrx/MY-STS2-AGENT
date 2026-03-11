@@ -13,13 +13,17 @@ using MegaCrit.Sts2.Core.Events;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Characters;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Debug.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
@@ -44,7 +48,7 @@ namespace STS2AIAgent.Game;
 
 internal static class GameStateService
 {
-    private const int StateVersion = 2;
+    private const int StateVersion = 3;
 
     public static GameStatePayload BuildStatePayload()
     {
@@ -59,12 +63,14 @@ internal static class GameStateService
             state_version = StateVersion,
             run_id = runState?.Rng.StringSeed ?? "run_unknown",
             screen = screen,
+            session = BuildSessionPayload(currentScreen, runState),
             in_combat = CombatManager.Instance.IsInProgress,
             turn = combatState?.RoundNumber,
             available_actions = availableActions,
             combat = BuildCombatPayload(combatState),
             run = BuildRunPayload(currentScreen, combatState, runState),
             multiplayer = BuildMultiplayerPayload(currentScreen, runState),
+            multiplayer_lobby = BuildMultiplayerLobbyPayload(currentScreen),
             map = BuildMapPayload(currentScreen, runState),
             selection = BuildSelectionPayload(currentScreen),
             character_select = BuildCharacterSelectPayload(currentScreen),
@@ -76,6 +82,47 @@ internal static class GameStateService
             reward = BuildRewardPayload(currentScreen),
             modal = BuildModalPayload(currentScreen),
             game_over = BuildGameOverPayload(currentScreen, runState)
+        };
+    }
+
+    private static SessionPayload BuildSessionPayload(IScreenContext? currentScreen, RunState? runState)
+    {
+        if (GetMultiplayerTestScene() != null)
+        {
+            return new SessionPayload
+            {
+                mode = "multiplayer",
+                phase = "multiplayer_lobby",
+                control_scope = "local_player"
+            };
+        }
+
+        var characterSelectScreen = GetCharacterSelectScreen(currentScreen);
+        if (characterSelectScreen != null)
+        {
+            return new SessionPayload
+            {
+                mode = characterSelectScreen.Lobby.NetService.Type.IsMultiplayer() ? "multiplayer" : "singleplayer",
+                phase = "character_select",
+                control_scope = "local_player"
+            };
+        }
+
+        if (runState != null)
+        {
+            return new SessionPayload
+            {
+                mode = RunManager.Instance.NetService.Type.IsMultiplayer() ? "multiplayer" : "singleplayer",
+                phase = "run",
+                control_scope = "local_player"
+            };
+        }
+
+        return new SessionPayload
+        {
+            mode = "singleplayer",
+            phase = "menu",
+            control_scope = "local_player"
         };
     }
 
@@ -415,6 +462,46 @@ internal static class GameStateService
             });
         }
 
+        if (CanHostMultiplayerLobby(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "host_multiplayer_lobby",
+                requires_target = false,
+                requires_index = false
+            });
+        }
+
+        if (CanJoinMultiplayerLobby(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "join_multiplayer_lobby",
+                requires_target = false,
+                requires_index = false
+            });
+        }
+
+        if (CanReadyMultiplayerLobby(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "ready_multiplayer_lobby",
+                requires_target = false,
+                requires_index = false
+            });
+        }
+
+        if (CanDisconnectMultiplayerLobby(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "disconnect_multiplayer_lobby",
+                requires_target = false,
+                requires_index = false
+            });
+        }
+
         if (CanIncreaseAscension(currentScreen))
         {
             descriptors.Add(new ActionDescriptor
@@ -699,6 +786,12 @@ internal static class GameStateService
 
     public static bool CanSelectCharacter(IScreenContext? currentScreen)
     {
+        var multiplayerTestScene = GetMultiplayerTestScene();
+        if (multiplayerTestScene != null)
+        {
+            return GetMultiplayerTestLobby(multiplayerTestScene) != null && GetMultiplayerLobbyCharacters().Length > 0;
+        }
+
         return GetCharacterSelectButtons(currentScreen)
             .Any(button => !button.IsLocked && button.IsEnabled && button.IsVisibleInTree());
     }
@@ -786,8 +879,40 @@ internal static class GameStateService
 
     public static bool CanUnready(IScreenContext? currentScreen)
     {
+        var multiplayerTestScene = GetMultiplayerTestScene();
+        var multiplayerLobby = multiplayerTestScene != null ? GetMultiplayerTestLobby(multiplayerTestScene) : null;
+        if (multiplayerLobby != null)
+        {
+            return multiplayerLobby.LocalPlayer.isReady;
+        }
+
         var unreadyButton = GetCharacterUnreadyButton(currentScreen);
         return unreadyButton != null && unreadyButton.IsEnabled && unreadyButton.IsVisibleInTree();
+    }
+
+    public static bool CanHostMultiplayerLobby(IScreenContext? currentScreen)
+    {
+        var scene = GetMultiplayerTestScene();
+        return scene != null && GetMultiplayerTestLobby(scene) == null;
+    }
+
+    public static bool CanJoinMultiplayerLobby(IScreenContext? currentScreen)
+    {
+        var scene = GetMultiplayerTestScene();
+        return scene != null && GetMultiplayerTestLobby(scene) == null;
+    }
+
+    public static bool CanReadyMultiplayerLobby(IScreenContext? currentScreen)
+    {
+        var scene = GetMultiplayerTestScene();
+        var lobby = scene != null ? GetMultiplayerTestLobby(scene) : null;
+        return lobby != null && !lobby.LocalPlayer.isReady;
+    }
+
+    public static bool CanDisconnectMultiplayerLobby(IScreenContext? currentScreen)
+    {
+        var scene = GetMultiplayerTestScene();
+        return scene != null && GetMultiplayerTestLobby(scene) != null;
     }
 
     public static bool CanIncreaseAscension(IScreenContext? currentScreen)
@@ -1421,6 +1546,26 @@ internal static class GameStateService
             names.Add("unready");
         }
 
+        if (CanHostMultiplayerLobby(currentScreen))
+        {
+            names.Add("host_multiplayer_lobby");
+        }
+
+        if (CanJoinMultiplayerLobby(currentScreen))
+        {
+            names.Add("join_multiplayer_lobby");
+        }
+
+        if (CanReadyMultiplayerLobby(currentScreen))
+        {
+            names.Add("ready_multiplayer_lobby");
+        }
+
+        if (CanDisconnectMultiplayerLobby(currentScreen))
+        {
+            names.Add("disconnect_multiplayer_lobby");
+        }
+
         if (CanIncreaseAscension(currentScreen))
         {
             names.Add("increase_ascension");
@@ -1524,6 +1669,23 @@ internal static class GameStateService
 
     private static MultiplayerPayload? BuildMultiplayerPayload(IScreenContext? currentScreen, RunState? runState)
     {
+        var multiplayerTestScene = GetMultiplayerTestScene();
+        var multiplayerTestLobby = multiplayerTestScene != null ? GetMultiplayerTestLobby(multiplayerTestScene) : null;
+        if (multiplayerTestLobby != null)
+        {
+            return new MultiplayerPayload
+            {
+                is_multiplayer = true,
+                net_game_type = multiplayerTestLobby.NetService.Type.ToString(),
+                local_player_id = NetIdToString(multiplayerTestLobby.LocalPlayer.id),
+                player_count = multiplayerTestLobby.Players.Count,
+                connected_player_ids = multiplayerTestLobby.Players
+                    .OrderBy(player => player.slotId)
+                    .Select(player => NetIdToString(player.id))
+                    .ToArray()
+            };
+        }
+
         var characterSelectScreen = GetCharacterSelectScreen(currentScreen);
         if (characterSelectScreen != null)
         {
@@ -1561,6 +1723,57 @@ internal static class GameStateService
             connected_player_ids = GetConnectedPlayerIds(runState)
                 .OrderBy(id => runState.GetPlayerSlotIndex(id))
                 .Select(NetIdToString)
+                .ToArray()
+        };
+    }
+
+    private static MultiplayerLobbyPayload? BuildMultiplayerLobbyPayload(IScreenContext? currentScreen)
+    {
+        var scene = GetMultiplayerTestScene();
+        if (scene == null)
+        {
+            return null;
+        }
+
+        var lobby = GetMultiplayerTestLobby(scene);
+        var selectedCharacterId = lobby?.LocalPlayer.character?.Id.Entry
+            ?? GetMultiplayerTestCharacterPaginator(scene)?.Character?.Id.Entry;
+        var localPlayerId = lobby != null ? NetIdToString(lobby.LocalPlayer.id) : null;
+
+        return new MultiplayerLobbyPayload
+        {
+            net_game_type = lobby?.NetService.Type.ToString() ?? NetGameType.Singleplayer.ToString(),
+            join_host = GetMultiplayerLobbyJoinHost(),
+            join_port = GetMultiplayerLobbyJoinPort(),
+            local_net_id_hint = NetIdToString(GetMultiplayerLobbyJoinNetIdHint()),
+            has_lobby = lobby != null,
+            is_host = lobby?.NetService.Type == NetGameType.Host,
+            is_client = lobby?.NetService.Type == NetGameType.Client,
+            local_ready = lobby?.LocalPlayer.isReady ?? false,
+            can_host = CanHostMultiplayerLobby(currentScreen),
+            can_join = CanJoinMultiplayerLobby(currentScreen),
+            can_ready = CanReadyMultiplayerLobby(currentScreen),
+            can_disconnect = CanDisconnectMultiplayerLobby(currentScreen),
+            can_unready = CanUnready(currentScreen),
+            selected_character_id = selectedCharacterId,
+            player_count = lobby?.Players.Count ?? 0,
+            max_players = lobby != null
+                ? lobby.MaxPlayers > 0 ? lobby.MaxPlayers : lobby.Players.Count
+                : 4,
+            players = lobby?.Players
+                .OrderBy(player => player.slotId)
+                .Select(player => BuildCharacterSelectPlayerPayload(player, lobby.LocalPlayer.id))
+                .ToArray() ?? Array.Empty<CharacterSelectPlayerPayload>(),
+            characters = GetMultiplayerLobbyCharacters()
+                .Select((character, index) => new CharacterSelectOptionPayload
+                {
+                    index = index,
+                    character_id = character.Id.Entry,
+                    name = character.Title.GetFormattedText(),
+                    is_locked = false,
+                    is_selected = selectedCharacterId == character.Id.Entry,
+                    is_random = false
+                })
                 .ToArray()
         };
     }
@@ -2656,6 +2869,60 @@ internal static class GameStateService
         return currentScreen as NCharacterSelectScreen;
     }
 
+    public static NMultiplayerTest? GetMultiplayerTestScene()
+    {
+        var currentScene = NGame.Instance?.RootSceneContainer?.CurrentScene;
+        return currentScene is NMultiplayerTest multiplayerTest && multiplayerTest.IsVisibleInTree()
+            ? multiplayerTest
+            : null;
+    }
+
+    public static StartRunLobby? GetMultiplayerTestLobby(NMultiplayerTest scene)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var field = typeof(NMultiplayerTest).GetField("_lobby", flags);
+        return field?.GetValue(scene) as StartRunLobby;
+    }
+
+    public static NMultiplayerTestCharacterPaginator? GetMultiplayerTestCharacterPaginator(NMultiplayerTest scene)
+    {
+        return scene.GetNodeOrNull<NMultiplayerTestCharacterPaginator>("CharacterChooser");
+    }
+
+    public static string GetMultiplayerLobbyJoinHost()
+    {
+        var raw = System.Environment.GetEnvironmentVariable("STS2_MULTIPLAYER_HOST_IP");
+        return string.IsNullOrWhiteSpace(raw) ? "127.0.0.1" : raw.Trim();
+    }
+
+    public static int GetMultiplayerLobbyJoinPort()
+    {
+        return 33771;
+    }
+
+    public static ulong GetMultiplayerLobbyJoinNetIdHint()
+    {
+        var raw = System.Environment.GetEnvironmentVariable("STS2_MULTIPLAYER_NET_ID");
+        if (!string.IsNullOrWhiteSpace(raw) && ulong.TryParse(raw.Trim(), out var parsed))
+        {
+            return parsed;
+        }
+
+        return (ulong)System.Environment.ProcessId;
+    }
+
+    public static CharacterModel[] GetMultiplayerLobbyCharacters()
+    {
+        return
+        [
+            ModelDb.Character<Ironclad>(),
+            ModelDb.Character<Silent>(),
+            ModelDb.Character<Regent>(),
+            ModelDb.Character<Necrobinder>(),
+            ModelDb.Character<Defect>()
+        ];
+    }
+
     public static IReadOnlyList<NCharacterSelectButton> GetCharacterSelectButtons(IScreenContext? currentScreen)
     {
         var screen = GetCharacterSelectScreen(currentScreen);
@@ -2835,6 +3102,11 @@ internal static class GameStateService
             return "CARD_SELECTION";
         }
 
+        if (GetMultiplayerTestScene() != null)
+        {
+            return "MULTIPLAYER_LOBBY";
+        }
+
         return currentScreen switch
         {
             NGameOverScreen => "GAME_OVER",
@@ -2957,6 +3229,8 @@ internal sealed class GameStatePayload
 
     public string screen { get; init; } = "UNKNOWN";
 
+    public SessionPayload session { get; init; } = new();
+
     public bool in_combat { get; init; }
 
     public int? turn { get; init; }
@@ -2968,6 +3242,8 @@ internal sealed class GameStatePayload
     public RunPayload? run { get; init; }
 
     public MultiplayerPayload? multiplayer { get; init; }
+
+    public MultiplayerLobbyPayload? multiplayer_lobby { get; init; }
 
     public MapPayload? map { get; init; }
 
@@ -2990,6 +3266,15 @@ internal sealed class GameStatePayload
     public ModalPayload? modal { get; init; }
 
     public GameOverPayload? game_over { get; init; }
+}
+
+internal sealed class SessionPayload
+{
+    public string mode { get; init; } = "singleplayer";
+
+    public string phase { get; init; } = "menu";
+
+    public string control_scope { get; init; } = "local_player";
 }
 
 internal sealed class AvailableActionsPayload
@@ -3046,6 +3331,45 @@ internal sealed class MultiplayerPayload
     public int player_count { get; init; }
 
     public string[] connected_player_ids { get; init; } = Array.Empty<string>();
+}
+
+internal sealed class MultiplayerLobbyPayload
+{
+    public string net_game_type { get; init; } = string.Empty;
+
+    public string join_host { get; init; } = "127.0.0.1";
+
+    public int join_port { get; init; }
+
+    public string? local_net_id_hint { get; init; }
+
+    public bool has_lobby { get; init; }
+
+    public bool is_host { get; init; }
+
+    public bool is_client { get; init; }
+
+    public bool local_ready { get; init; }
+
+    public bool can_host { get; init; }
+
+    public bool can_join { get; init; }
+
+    public bool can_ready { get; init; }
+
+    public bool can_disconnect { get; init; }
+
+    public bool can_unready { get; init; }
+
+    public string? selected_character_id { get; init; }
+
+    public int player_count { get; init; }
+
+    public int max_players { get; init; }
+
+    public CharacterSelectPlayerPayload[] players { get; init; } = Array.Empty<CharacterSelectPlayerPayload>();
+
+    public CharacterSelectOptionPayload[] characters { get; init; } = Array.Empty<CharacterSelectOptionPayload>();
 }
 
 internal sealed class MapPayload

@@ -4,16 +4,19 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Merchant;
+using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Potions;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.DevConsole;
 using MegaCrit.Sts2.Core.GameActions;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Debug;
+using MegaCrit.Sts2.Core.Nodes.Debug.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Screens;
@@ -34,7 +37,9 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Logging;
+using MegaCrit.Sts2.Core.Multiplayer.Connection;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Timeline;
@@ -80,6 +85,10 @@ internal static class GameActionService
             "select_character" => ExecuteSelectCharacterAsync(request),
             "embark" => ExecuteEmbarkAsync(),
             "unready" => ExecuteUnreadyAsync(),
+            "host_multiplayer_lobby" => ExecuteHostMultiplayerLobbyAsync(),
+            "join_multiplayer_lobby" => ExecuteJoinMultiplayerLobbyAsync(),
+            "ready_multiplayer_lobby" => ExecuteReadyMultiplayerLobbyAsync(),
+            "disconnect_multiplayer_lobby" => ExecuteDisconnectMultiplayerLobbyAsync(),
             "increase_ascension" => ExecuteAdjustAscensionAsync(1, "increase_ascension"),
             "decrease_ascension" => ExecuteAdjustAscensionAsync(-1, "decrease_ascension"),
             "use_potion" => ExecuteUsePotionAsync(request),
@@ -2260,6 +2269,12 @@ internal static class GameActionService
     {
         var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
         var screen = GameStateService.ResolveScreen(currentScreen);
+        var multiplayerTestScene = GameStateService.GetMultiplayerTestScene();
+
+        if (multiplayerTestScene != null)
+        {
+            return await ExecuteSelectMultiplayerLobbyCharacterAsync(request, multiplayerTestScene, screen);
+        }
 
         if (currentScreen is not NCharacterSelectScreen characterSelectScreen || !GameStateService.CanSelectCharacter(currentScreen))
         {
@@ -2324,6 +2339,65 @@ internal static class GameActionService
         };
     }
 
+    private static async Task<ActionResponsePayload> ExecuteSelectMultiplayerLobbyCharacterAsync(ActionRequest request, NMultiplayerTest scene, string screen)
+    {
+        if (!GameStateService.CanSelectCharacter(ActiveScreenContext.Instance.GetCurrentScreen()))
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "select_character",
+                screen
+            });
+        }
+
+        if (request.option_index == null)
+        {
+            throw new ApiException(400, "invalid_request", "select_character requires option_index.", new
+            {
+                action = "select_character"
+            });
+        }
+
+        var characters = GameStateService.GetMultiplayerLobbyCharacters();
+        if (request.option_index < 0 || request.option_index >= characters.Length)
+        {
+            throw new ApiException(409, "invalid_target", "option_index is out of range.", new
+            {
+                action = "select_character",
+                option_index = request.option_index,
+                option_count = characters.Length
+            });
+        }
+
+        var paginator = GameStateService.GetMultiplayerTestCharacterPaginator(scene)
+            ?? throw new ApiException(503, "state_unavailable", "Multiplayer character selector is unavailable.", new
+            {
+                action = "select_character",
+                screen
+            }, retryable: true);
+
+        var lobby = GameStateService.GetMultiplayerTestLobby(scene)
+            ?? throw new ApiException(503, "state_unavailable", "Multiplayer lobby is unavailable.", new
+            {
+                action = "select_character",
+                screen
+            }, retryable: true);
+
+        var previousCharacterId = lobby.LocalPlayer.character.Id.Entry;
+        var currentCharacterId = characters[request.option_index.Value].Id.Entry;
+        paginator.SetIndex(request.option_index.Value);
+        var stable = await WaitForMultiplayerLobbyCharacterSelectionTransitionAsync(scene, currentCharacterId, previousCharacterId, TimeSpan.FromSeconds(5));
+
+        return new ActionResponsePayload
+        {
+            action = "select_character",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
     private static async Task<ActionResponsePayload> ExecuteEmbarkAsync()
     {
         var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
@@ -2362,6 +2436,38 @@ internal static class GameActionService
     {
         var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
         var screen = GameStateService.ResolveScreen(currentScreen);
+        var multiplayerTestScene = GameStateService.GetMultiplayerTestScene();
+
+        if (multiplayerTestScene != null)
+        {
+            var multiplayerLobby = GameStateService.GetMultiplayerTestLobby(multiplayerTestScene)
+                ?? throw new ApiException(503, "state_unavailable", "Multiplayer lobby is unavailable.", new
+                {
+                    action = "unready",
+                    screen
+                }, retryable: true);
+
+            if (!GameStateService.CanUnready(currentScreen))
+            {
+                throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+                {
+                    action = "unready",
+                    screen
+                });
+            }
+
+            multiplayerLobby.SetReady(ready: false);
+            var multiplayerStable = await WaitForMultiplayerLobbyReadyTransitionAsync(multiplayerTestScene, ready: false, expectRunStart: false, TimeSpan.FromSeconds(5));
+
+            return new ActionResponsePayload
+            {
+                action = "unready",
+                status = multiplayerStable ? "completed" : "pending",
+                stable = multiplayerStable,
+                message = multiplayerStable ? "Action completed." : "Action queued but state is still transitioning.",
+                state = GameStateService.BuildStatePayload()
+            };
+        }
 
         if (!GameStateService.CanUnready(currentScreen) || currentScreen is not NCharacterSelectScreen characterSelectScreen)
         {
@@ -2378,6 +2484,162 @@ internal static class GameActionService
         return new ActionResponsePayload
         {
             action = "unready",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteHostMultiplayerLobbyAsync()
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+        var scene = GameStateService.GetMultiplayerTestScene();
+
+        if (!GameStateService.CanHostMultiplayerLobby(currentScreen) || scene == null)
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "host_multiplayer_lobby",
+                screen
+            });
+        }
+
+        var startHostTask = InvokePrivateTask<bool>(scene, "StartHost", false)
+            ?? throw new ApiException(503, "state_unavailable", "Multiplayer host entry point is unavailable.", new
+            {
+                action = "host_multiplayer_lobby",
+                screen
+            }, retryable: true);
+
+        var hostStarted = await startHostTask;
+        if (!hostStarted)
+        {
+            throw new ApiException(409, "invalid_action", "Failed to host the multiplayer lobby.", new
+            {
+                action = "host_multiplayer_lobby",
+                screen
+            });
+        }
+
+        var stable = await WaitForMultiplayerLobbyHostTransitionAsync(scene, TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "host_multiplayer_lobby",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteJoinMultiplayerLobbyAsync()
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+        var scene = GameStateService.GetMultiplayerTestScene();
+
+        if (!GameStateService.CanJoinMultiplayerLobby(currentScreen) || scene == null)
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "join_multiplayer_lobby",
+                screen
+            });
+        }
+
+        var joinHost = GameStateService.GetMultiplayerLobbyJoinHost();
+        var joinPort = (ushort)GameStateService.GetMultiplayerLobbyJoinPort();
+        var joinNetId = GameStateService.GetMultiplayerLobbyJoinNetIdHint();
+        var initializer = new ENetClientConnectionInitializer(joinNetId, joinHost, joinPort);
+        await scene.JoinToHost(initializer);
+
+        if (GameStateService.GetMultiplayerTestLobby(scene) == null)
+        {
+            throw new ApiException(409, "invalid_action", "Failed to join the multiplayer lobby.", new
+            {
+                action = "join_multiplayer_lobby",
+                screen,
+                join_host = joinHost,
+                join_port = joinPort,
+                net_id = joinNetId
+            });
+        }
+
+        var stable = await WaitForMultiplayerLobbyJoinTransitionAsync(scene, TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "join_multiplayer_lobby",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteReadyMultiplayerLobbyAsync()
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+        var scene = GameStateService.GetMultiplayerTestScene();
+
+        if (!GameStateService.CanReadyMultiplayerLobby(currentScreen) || scene == null)
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "ready_multiplayer_lobby",
+                screen
+            });
+        }
+
+        var lobby = GameStateService.GetMultiplayerTestLobby(scene)
+            ?? throw new ApiException(503, "state_unavailable", "Multiplayer lobby is unavailable.", new
+            {
+                action = "ready_multiplayer_lobby",
+                screen
+            }, retryable: true);
+        var expectRunStart = lobby.Players.Count > 1 &&
+            lobby.Players
+                .Where(player => player.id != lobby.LocalPlayer.id)
+                .All(player => player.isReady);
+
+        InvokePrivateVoid(scene, "ReadyButtonPressed");
+        var stable = await WaitForMultiplayerLobbyReadyTransitionAsync(scene, ready: true, expectRunStart, TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "ready_multiplayer_lobby",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteDisconnectMultiplayerLobbyAsync()
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+        var scene = GameStateService.GetMultiplayerTestScene();
+
+        if (!GameStateService.CanDisconnectMultiplayerLobby(currentScreen) || scene == null)
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "disconnect_multiplayer_lobby",
+                screen
+            });
+        }
+
+        InvokePrivateVoid(scene, "Disconnect", NetError.Quit);
+        var stable = await WaitForMultiplayerLobbyDisconnectTransitionAsync(scene, TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "disconnect_multiplayer_lobby",
             status = stable ? "completed" : "pending",
             stable = stable,
             message = stable ? "Action completed." : "Action queued but state is still transitioning.",
@@ -3251,6 +3513,137 @@ internal static class GameActionService
         return GodotObject.IsInstanceValid(screen) && screen.Lobby.Ascension == targetAscension;
     }
 
+    private static async Task<bool> WaitForMultiplayerLobbyCharacterSelectionTransitionAsync(
+        NMultiplayerTest scene,
+        string currentCharacterId,
+        string previousCharacterId,
+        TimeSpan timeout)
+    {
+        if (currentCharacterId == previousCharacterId)
+        {
+            return true;
+        }
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScene = GameStateService.GetMultiplayerTestScene();
+            if (!ReferenceEquals(currentScene, scene))
+            {
+                return false;
+            }
+
+            var lobby = GameStateService.GetMultiplayerTestLobby(scene);
+            if (lobby?.LocalPlayer.character?.Id.Entry == currentCharacterId)
+            {
+                return true;
+            }
+        }
+
+        return GameStateService.GetMultiplayerTestLobby(scene)?.LocalPlayer.character?.Id.Entry == currentCharacterId;
+    }
+
+    private static async Task<bool> WaitForMultiplayerLobbyHostTransitionAsync(NMultiplayerTest scene, TimeSpan timeout)
+    {
+        return await WaitForMultiplayerLobbyTransitionAsync(scene, timeout, lobby =>
+            lobby != null &&
+            lobby.NetService.Type == NetGameType.Host &&
+            lobby.Players.Count >= 1);
+    }
+
+    private static async Task<bool> WaitForMultiplayerLobbyJoinTransitionAsync(NMultiplayerTest scene, TimeSpan timeout)
+    {
+        return await WaitForMultiplayerLobbyTransitionAsync(scene, timeout, lobby =>
+            lobby != null &&
+            lobby.NetService.Type == NetGameType.Client &&
+            lobby.Players.Count >= 2);
+    }
+
+    private static async Task<bool> WaitForMultiplayerLobbyTransitionAsync(
+        NMultiplayerTest scene,
+        TimeSpan timeout,
+        Func<StartRunLobby?, bool> predicate)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScene = GameStateService.GetMultiplayerTestScene();
+            if (!ReferenceEquals(currentScene, scene))
+            {
+                return false;
+            }
+
+            var lobby = GameStateService.GetMultiplayerTestLobby(scene);
+            if (predicate(lobby))
+            {
+                return true;
+            }
+        }
+
+        return predicate(GameStateService.GetMultiplayerTestLobby(scene));
+    }
+
+    private static async Task<bool> WaitForMultiplayerLobbyReadyTransitionAsync(NMultiplayerTest scene, bool ready, bool expectRunStart, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScene = GameStateService.GetMultiplayerTestScene();
+            if (!ReferenceEquals(currentScene, scene))
+            {
+                return ready && expectRunStart;
+            }
+
+            var lobby = GameStateService.GetMultiplayerTestLobby(scene);
+            if (ready && expectRunStart && lobby != null && lobby.LocalPlayer.isReady)
+            {
+                continue;
+            }
+
+            if (lobby != null && lobby.LocalPlayer.isReady == ready)
+            {
+                return true;
+            }
+        }
+
+        var finalScene = GameStateService.GetMultiplayerTestScene();
+        if (!ReferenceEquals(finalScene, scene))
+        {
+            return ready && expectRunStart;
+        }
+
+        return GameStateService.GetMultiplayerTestLobby(scene)?.LocalPlayer.isReady == ready;
+    }
+
+    private static async Task<bool> WaitForMultiplayerLobbyDisconnectTransitionAsync(NMultiplayerTest scene, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScene = GameStateService.GetMultiplayerTestScene();
+            if (currentScene == null)
+            {
+                return true;
+            }
+
+            if (ReferenceEquals(currentScene, scene) && GameStateService.GetMultiplayerTestLobby(scene) == null)
+            {
+                return true;
+            }
+        }
+
+        var finalScene = GameStateService.GetMultiplayerTestScene();
+        return finalScene == null || (ReferenceEquals(finalScene, scene) && GameStateService.GetMultiplayerTestLobby(scene) == null);
+    }
+
     private static async Task<bool> WaitForPotionUseTransitionAsync(Player player, int potionIndex, PotionModel potion, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -3410,6 +3803,21 @@ internal static class GameActionService
     private static void ObserveBackgroundResult(Task<bool> task, string actionName)
     {
         _ = ObserveBackgroundResultCore(task, actionName);
+    }
+
+    private static Task<T>? InvokePrivateTask<T>(object target, string methodName, params object?[] args)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var method = target.GetType().GetMethod(methodName, flags);
+        return method?.Invoke(target, args) as Task<T>;
+    }
+
+    private static void InvokePrivateVoid(object target, string methodName, params object?[] args)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var method = target.GetType().GetMethod(methodName, flags)
+            ?? throw new InvalidOperationException($"Method '{methodName}' was not found on {target.GetType().FullName}.");
+        method.Invoke(target, args);
     }
 
     private static async Task ObserveBackgroundResultCore(Task<bool> task, string actionName)

@@ -152,8 +152,16 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         """Read a full snapshot of the current game state.
 
         Call this before making decisions. The payload includes the current
-        screen, available action names, combat entities, reward state, map
-        options, shop state, and run metadata.
+        screen, normalized `session` metadata, available action names, combat
+        entities, reward state, map options, shop state, and run metadata.
+
+        The top-level `session` payload is the AI-facing branch point:
+            - `session.mode`: `singleplayer` or `multiplayer`
+            - `session.phase`: `menu`, `character_select`, `multiplayer_lobby`, or `run`
+            - `session.control_scope`: always `local_player`
+
+        Use `session` plus `available_actions` to decide what to do next. Do
+        not infer multiplayer control from tool names.
 
         Defect-specific combat data is exposed through `combat.player`, which
         now includes `focus`, `base_orb_slots`, `orb_capacity`,
@@ -177,13 +185,23 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
 
         Usage loop:
             1. Call `get_game_state()` or `get_available_actions()`.
-            2. Pick an action that is currently available.
-            3. Pass only the indices required by that action from the latest state.
-            4. Read state again after the action completes.
+            2. Branch on `state.session.mode` and `state.session.phase`.
+            3. Pick an action that is currently available.
+            4. Pass only the indices required by that action from the latest state.
+            5. Read state again after the action completes.
+
+        Compact-tool rules:
+            - Guided mode intentionally keeps the tool surface small: use this
+              single `act` tool for both singleplayer and multiplayer actions.
+            - Multiplayer never changes the control scope; you only control the
+              local player exposed by the latest state.
+            - Never guess actions from screen names alone. Only call names that
+              are present in `state.available_actions`.
 
         Notes:
             - Use `card_index` for `play_card`.
-            - Use `option_index` for map, reward, shop, event, rest, and selection actions.
+            - Use `option_index` for map, reward, shop, event, rest, selection,
+              and multiplayer-lobby actions.
             - Use `target_index` only when the latest state marks a card or potion as `requires_target=true`.
             - Read `target_index_space` and `valid_target_indices` from state to know whether `target_index`
               refers to `combat.enemies[]` or `combat.players[]`.

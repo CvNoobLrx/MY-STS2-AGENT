@@ -15,6 +15,7 @@ import os
 from sts2_mcp.server import create_server
 
 ESSENTIAL_TOOLS = {"health_check", "get_game_state", "get_available_actions", "act"}
+GUIDED_DEBUG_TOOLS = ESSENTIAL_TOOLS | {"run_console_command"}
 LEGACY_ACTION_TOOLS = {
     "play_card",
     "choose_map_node",
@@ -45,8 +46,8 @@ async def main():
     if not ESSENTIAL_TOOLS.issubset(set(guided)):
         failures.append("guided profile is missing one or more essential tools")
 
-    if len(guided) > 5:
-        failures.append(f"guided profile should stay compact, but exposed {len(guided)} tools")
+    if set(guided) != ESSENTIAL_TOOLS:
+        failures.append(f"guided profile should expose exactly the essential tool set, but exposed {guided}")
 
     if any(name in guided for name in LEGACY_ACTION_TOOLS):
         failures.append("guided profile should not expose legacy per-action tools")
@@ -54,8 +55,8 @@ async def main():
     if "run_console_command" in guided:
         failures.append("guided profile should hide run_console_command while debug actions are disabled")
 
-    if "run_console_command" not in guided_debug:
-        failures.append("guided profile should expose run_console_command when debug actions are enabled")
+    if set(guided_debug) != GUIDED_DEBUG_TOOLS:
+        failures.append(f"guided debug profile should only add run_console_command, but exposed {guided_debug}")
 
     if not LEGACY_ACTION_TOOLS.issubset(set(full)):
         failures.append("full profile should expose legacy action wrappers")
