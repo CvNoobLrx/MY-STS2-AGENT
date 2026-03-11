@@ -51,11 +51,35 @@ foreach ($action in @($actionsResponse.data.actions)) {
     }
 }
 
+$stateActionSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+foreach ($actionName in @($state.available_actions)) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$actionName)) {
+        [void]$stateActionSet.Add([string]$actionName)
+    }
+}
+
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
 
+foreach ($actionName in $stateActionSet) {
+    if (-not $actionSet.Contains($actionName)) {
+        $failures.Add("state.available_actions contains '$actionName' but /actions/available does not")
+    }
+}
+
+foreach ($actionName in $actionSet) {
+    if (-not $stateActionSet.Contains($actionName)) {
+        $failures.Add("/actions/available contains '$actionName' but state.available_actions does not")
+    }
+}
+
 if ($null -ne $state.selection -and @($state.selection.cards).Count -gt 0) {
     Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "select_deck_card" -Reason "selection.cards[] is populated"
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "proceed" -Reason "card selection should not expose proceed while selection.cards[] is populated"
+
+    if ($state.screen -ne "CARD_SELECTION") {
+        $failures.Add("selection.cards[] is populated but state.screen is '$($state.screen)' instead of 'CARD_SELECTION'")
+    }
 }
 
 if ($null -ne $state.reward) {
@@ -81,6 +105,9 @@ if ($null -ne $state.reward) {
 if ($null -ne $state.map -and @($state.map.available_nodes).Count -gt 0) {
     Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "choose_map_node" -Reason "map.available_nodes[] is populated"
 }
+elseif ($null -ne $state.map) {
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "choose_map_node" -Reason "map.available_nodes[] is empty"
+}
 
 if ($null -ne $state.chest) {
     if (-not $state.chest.is_opened) {
@@ -94,10 +121,32 @@ if ($null -ne $state.chest) {
     if (($actionSet.Contains("proceed")) -and (-not $state.chest.has_relic_been_claimed)) {
         $failures.Add("chest.has_relic_been_claimed should be true before proceed is exposed")
     }
+
+    if ($state.chest.has_relic_been_claimed) {
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "choose_treasure_relic" -Reason "chest relic has already been claimed"
+    }
 }
 
-if ($null -ne $state.event -and @($state.event.options | Where-Object { -not $_.is_locked }).Count -gt 0) {
-    Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "choose_event_option" -Reason "event has unlocked options"
+if ($null -ne $state.event) {
+    if (@($state.event.options | Where-Object { -not $_.is_locked }).Count -gt 0) {
+        Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "choose_event_option" -Reason "event has unlocked options"
+    }
+
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "proceed" -Reason "event flows should use choose_event_option, including finished synthetic proceed"
+
+    $proceedOptions = @($state.event.options | Where-Object { $_.is_proceed })
+    if ($state.event.is_finished) {
+        if (@($state.event.options).Count -ne 1) {
+            $failures.Add("finished events should only expose one synthetic proceed option")
+        }
+
+        if ($proceedOptions.Count -ne 1) {
+            $failures.Add("finished events should expose exactly one synthetic proceed option")
+        }
+    }
+    elseif ($proceedOptions.Count -gt 0) {
+        $failures.Add("unfinished events should not expose synthetic proceed options")
+    }
 }
 
 if ($null -ne $state.rest -and @($state.rest.options | Where-Object { $_.is_enabled }).Count -gt 0) {
@@ -108,27 +157,53 @@ if ($null -ne $state.shop) {
     if ($state.shop.can_open) {
         Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "open_shop_inventory" -Reason "shop.can_open=true"
     }
+    else {
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "open_shop_inventory" -Reason "shop.can_open=false"
+    }
 
     if ($state.shop.can_close) {
         Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "close_shop_inventory" -Reason "shop.can_close=true"
     }
+    else {
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "close_shop_inventory" -Reason "shop.can_close=false"
+    }
 
     if ($state.shop.is_open) {
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "proceed" -Reason "open shop inventory should not expose proceed"
+
         if (@($state.shop.cards | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
             Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_card" -Reason "shop.is_open=true and shop.cards[] has purchasable entries"
+        }
+        else {
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_card" -Reason "shop.is_open=true but no shop.cards[] entries are purchasable"
         }
 
         if (@($state.shop.relics | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
             Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_relic" -Reason "shop.is_open=true and shop.relics[] has purchasable entries"
         }
+        else {
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_relic" -Reason "shop.is_open=true but no shop.relics[] entries are purchasable"
+        }
 
         if (@($state.shop.potions | Where-Object { $_.is_stocked -and $_.enough_gold }).Count -gt 0) {
             Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_potion" -Reason "shop.is_open=true and shop.potions[] has purchasable entries"
+        }
+        else {
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_potion" -Reason "shop.is_open=true but no shop.potions[] entries are purchasable"
         }
 
         if ($null -ne $state.shop.card_removal -and $state.shop.card_removal.available -and $state.shop.card_removal.enough_gold -and (-not $state.shop.card_removal.used)) {
             Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "remove_card_at_shop" -Reason "shop.is_open=true and shop.card_removal is available and affordable"
         }
+        else {
+            Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "remove_card_at_shop" -Reason "shop.is_open=true but shop.card_removal is not currently purchasable"
+        }
+    }
+    else {
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_card" -Reason "shop inventory is closed"
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_relic" -Reason "shop inventory is closed"
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "buy_potion" -Reason "shop inventory is closed"
+        Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "remove_card_at_shop" -Reason "shop inventory is closed"
     }
 }
 
@@ -212,9 +287,15 @@ if ($state.in_combat -and $null -ne $state.combat) {
 if (@($state.run.potions | Where-Object { $_.can_use }).Count -gt 0) {
     Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "use_potion" -Reason "run.potions[] has usable entries"
 }
+else {
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "use_potion" -Reason "run.potions[] has no usable entries"
+}
 
 if (@($state.run.potions | Where-Object { $_.can_discard }).Count -gt 0) {
     Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "discard_potion" -Reason "run.potions[] has discardable entries"
+}
+else {
+    Add-ForbiddenActionFailure -Failures $failures -ActionSet $actionSet -ActionName "discard_potion" -Reason "run.potions[] has no discardable entries"
 }
 
 foreach ($potion in @($state.run.potions)) {
@@ -222,8 +303,12 @@ foreach ($potion in @($state.run.potions)) {
         continue
     }
 
-    if ($potion.target_type -eq "TargetedNoCreature" -and $potion.requires_target) {
-        $failures.Add("potion '$($potion.potion_id)' should not require target_index when target_type=TargetedNoCreature")
+    if (($potion.target_type -eq "TargetedNoCreature" -or $potion.target_type -eq "AnyPlayer") -and $potion.requires_target) {
+        $failures.Add("potion '$($potion.potion_id)' should not require target_index when target_type=$($potion.target_type)")
+    }
+
+    if ($potion.target_type -eq "AnyEnemy" -and (-not $potion.requires_target)) {
+        $failures.Add("potion '$($potion.potion_id)' should require target_index when target_type=AnyEnemy")
     }
 }
 
