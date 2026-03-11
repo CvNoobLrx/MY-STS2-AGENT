@@ -23,6 +23,7 @@ $serverPy = Join-Path $mcpRoot "src/sts2_mcp/server.py"
 $buildScript = Join-Path $ProjectRoot "scripts/build-mod.ps1"
 $testScript = Join-Path $ProjectRoot "scripts/test-mod-load.ps1"
 $stateInvariantScript = Join-Path $ProjectRoot "scripts/test-state-invariants.ps1"
+$mcpToolProfileScript = Join-Path $ProjectRoot "scripts/test-mcp-tool-profile.ps1"
 $releaseDoc = Join-Path $ProjectRoot "docs/release-readiness.md"
 $requiredDocs = @(
     (Join-Path $ProjectRoot "docs/api.md"),
@@ -52,6 +53,10 @@ Invoke-Step -Name "Import MCP server package" -Action {
     }
 }
 
+Invoke-Step -Name "Validate MCP tool profiles" -Action {
+    powershell -ExecutionPolicy Bypass -File $mcpToolProfileScript -RepoRoot $ProjectRoot | Out-Host
+}
+
 Invoke-Step -Name "Check release documents" -Action {
     $missing = $requiredDocs | Where-Object { -not (Test-Path $_) }
 
@@ -70,4 +75,5 @@ Write-Host "[preflight] Manual validation next:"
 Write-Host "  1. powershell -ExecutionPolicy Bypass -File `"$buildScript`" -Configuration $Configuration"
 Write-Host "  2. powershell -ExecutionPolicy Bypass -File `"$testScript`" -DeepCheck"
 Write-Host "  3. powershell -ExecutionPolicy Bypass -File `"$stateInvariantScript`""
-Write-Host "  4. Follow the manual checklist in `"$releaseDoc`""
+Write-Host "  4. powershell -ExecutionPolicy Bypass -File `"$mcpToolProfileScript`" -RepoRoot `"$ProjectRoot`""
+Write-Host "  5. Follow the manual checklist in `"$releaseDoc`""

@@ -717,7 +717,14 @@ internal static class GameActionService
             return false;
         }
 
-        return IsStableScreenState(ActiveScreenContext.Instance.GetCurrentScreen(), allowMapScreen: false);
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var runState = RunManager.Instance.DebugOnlyGetState();
+        if (!DoesScreenMatchCurrentRoom(currentScreen, runState?.CurrentRoom))
+        {
+            return false;
+        }
+
+        return IsStableScreenState(currentScreen, allowMapScreen: false);
     }
 
     private static bool HasEnteredMapDestination(Func<bool> roomEntered)
@@ -729,6 +736,26 @@ internal static class GameActionService
 
         var runState = RunManager.Instance.DebugOnlyGetState();
         return runState?.CurrentRoom is not null && runState.CurrentRoom is not MapRoom;
+    }
+
+    private static bool DoesScreenMatchCurrentRoom(IScreenContext? currentScreen, AbstractRoom? currentRoom)
+    {
+        if (currentRoom == null)
+        {
+            return false;
+        }
+
+        var screen = GameStateService.ResolveScreen(currentScreen);
+        return currentRoom switch
+        {
+            CombatRoom => screen == "COMBAT",
+            EventRoom => screen == "EVENT",
+            MerchantRoom => screen == "SHOP",
+            RestSiteRoom => screen == "REST",
+            TreasureRoom => screen == "CHEST",
+            MapRoom => screen == "MAP",
+            _ => screen != "UNKNOWN" && screen != "MAP"
+        };
     }
 
     private static bool IsStableScreenState(IScreenContext? currentScreen, bool allowMapScreen)

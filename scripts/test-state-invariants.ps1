@@ -173,6 +173,39 @@ if ($state.in_combat -and $null -ne $state.combat) {
     if (@($state.combat.hand | Where-Object { $_.playable }).Count -gt 0) {
         Add-MissingActionFailure -Failures $failures -ActionSet $actionSet -ActionName "play_card" -Reason "combat.hand[] has playable cards"
     }
+
+    if ($null -ne $state.combat.player) {
+        $orbCount = @($state.combat.player.orbs).Count
+        $orbCapacity = [int]$state.combat.player.orb_capacity
+        $emptyOrbSlots = [int]$state.combat.player.empty_orb_slots
+
+        if ($orbCapacity -lt 0) {
+            $failures.Add("combat.player.orb_capacity should never be negative")
+        }
+
+        if ($orbCount -gt $orbCapacity) {
+            $failures.Add("combat.player.orbs[] count exceeds combat.player.orb_capacity")
+        }
+
+        if ($emptyOrbSlots -ne ($orbCapacity - $orbCount)) {
+            $failures.Add("combat.player.empty_orb_slots does not match orb_capacity - orbs.Count")
+        }
+
+        $expectedSlotIndex = 0
+        foreach ($orb in @($state.combat.player.orbs)) {
+            if ($orb.slot_index -ne $expectedSlotIndex) {
+                $failures.Add("combat.player.orbs[] slot_index values must stay contiguous and zero-based")
+                break
+            }
+
+            if ([string]::IsNullOrWhiteSpace([string]$orb.orb_id)) {
+                $failures.Add("combat.player.orbs[] entries must expose orb_id")
+                break
+            }
+
+            $expectedSlotIndex++
+        }
+    }
 }
 
 if (@($state.run.potions | Where-Object { $_.can_use }).Count -gt 0) {
@@ -190,6 +223,20 @@ foreach ($potion in @($state.run.potions)) {
 
     if ($potion.target_type -eq "TargetedNoCreature" -and $potion.requires_target) {
         $failures.Add("potion '$($potion.potion_id)' should not require target_index when target_type=TargetedNoCreature")
+    }
+}
+
+if ($null -ne $state.run) {
+    if ([string]::IsNullOrWhiteSpace([string]$state.run.character_id)) {
+        $failures.Add("run.character_id should always be populated when run payload exists")
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$state.run.character_name)) {
+        $failures.Add("run.character_name should always be populated when run payload exists")
+    }
+
+    if ([int]$state.run.base_orb_slots -lt 0) {
+        $failures.Add("run.base_orb_slots should never be negative")
     }
 }
 

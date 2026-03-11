@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Events;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
@@ -41,7 +42,7 @@ namespace STS2AIAgent.Game;
 
 internal static class GameStateService
 {
-    private const int StateVersion = 1;
+    private const int StateVersion = 2;
 
     public static GameStatePayload BuildStatePayload()
     {
@@ -1309,6 +1310,8 @@ internal static class GameStateService
 
         var hand = me.PlayerCombatState.Hand.Cards.ToList();
         var enemies = combatState.Enemies.ToList();
+        var orbQueue = me.PlayerCombatState.OrbQueue;
+        var orbs = orbQueue.Orbs.ToList();
 
         return new CombatPayload
         {
@@ -1318,7 +1321,12 @@ internal static class GameStateService
                 max_hp = me.Creature.MaxHp,
                 block = me.Creature.Block,
                 energy = me.PlayerCombatState.Energy,
-                stars = me.PlayerCombatState.Stars
+                stars = me.PlayerCombatState.Stars,
+                focus = me.Creature.GetPowerAmount<FocusPower>(),
+                base_orb_slots = me.BaseOrbSlotCount,
+                orb_capacity = orbQueue.Capacity,
+                empty_orb_slots = Math.Max(0, orbQueue.Capacity - orbs.Count),
+                orbs = orbs.Select((orb, index) => BuildCombatOrbPayload(orb, index)).ToArray()
             },
             hand = hand.Select((card, index) => BuildHandCardPayload(card, index)).ToArray(),
             enemies = enemies.Select((enemy, index) => BuildEnemyPayload(enemy, index)).ToArray()
@@ -1335,10 +1343,13 @@ internal static class GameStateService
 
         return new RunPayload
         {
+            character_id = player.Character.Id.Entry,
+            character_name = player.Character.Title.GetFormattedText(),
             current_hp = player.Creature.CurrentHp,
             max_hp = player.Creature.MaxHp,
             gold = player.Gold,
             max_energy = player.MaxEnergy,
+            base_orb_slots = player.BaseOrbSlotCount,
             deck = player.Deck.Cards.Select((card, index) => BuildDeckCardPayload(card, index)).ToArray(),
             relics = player.Relics.Select((relic, index) => new RunRelicPayload
             {
@@ -1825,6 +1836,19 @@ internal static class GameStateService
             is_alive = enemy.IsAlive,
             is_hittable = enemy.IsHittable,
             intent = enemy.Monster?.NextMove?.Id
+        };
+    }
+
+    private static CombatOrbPayload BuildCombatOrbPayload(OrbModel orb, int slotIndex)
+    {
+        return new CombatOrbPayload
+        {
+            slot_index = slotIndex,
+            orb_id = orb.Id.Entry,
+            name = orb.Title.GetFormattedText(),
+            passive_value = orb.PassiveVal,
+            evoke_value = orb.EvokeVal,
+            is_front = slotIndex == 0
         };
     }
 
@@ -2548,6 +2572,10 @@ internal sealed class CombatPayload
 
 internal sealed class RunPayload
 {
+    public string character_id { get; init; } = string.Empty;
+
+    public string character_name { get; init; } = string.Empty;
+
     public int current_hp { get; init; }
 
     public int max_hp { get; init; }
@@ -2555,6 +2583,8 @@ internal sealed class RunPayload
     public int gold { get; init; }
 
     public int max_energy { get; init; }
+
+    public int base_orb_slots { get; init; }
 
     public DeckCardPayload[] deck { get; init; } = Array.Empty<DeckCardPayload>();
 
@@ -2878,6 +2908,31 @@ internal sealed class CombatPlayerPayload
     public int energy { get; init; }
 
     public int stars { get; init; }
+
+    public int focus { get; init; }
+
+    public int base_orb_slots { get; init; }
+
+    public int orb_capacity { get; init; }
+
+    public int empty_orb_slots { get; init; }
+
+    public CombatOrbPayload[] orbs { get; init; } = Array.Empty<CombatOrbPayload>();
+}
+
+internal sealed class CombatOrbPayload
+{
+    public int slot_index { get; init; }
+
+    public string orb_id { get; init; } = string.Empty;
+
+    public string name { get; init; } = string.Empty;
+
+    public decimal passive_value { get; init; }
+
+    public decimal evoke_value { get; init; }
+
+    public bool is_front { get; init; }
 }
 
 internal sealed class CombatHandCardPayload
