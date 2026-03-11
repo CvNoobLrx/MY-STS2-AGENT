@@ -956,7 +956,7 @@ internal static class GameActionService
         var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
         var screen = GameStateService.ResolveScreen(currentScreen);
 
-        if (currentScreen is not NCardGridSelectionScreen cardSelectScreen || !GameStateService.CanSelectDeckCard(currentScreen))
+        if (!GameStateService.CanSelectDeckCard(currentScreen))
         {
             throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
             {
@@ -986,7 +986,13 @@ internal static class GameActionService
 
         var selected = options[request.option_index.Value];
         selected.EmitSignal(NCardHolder.SignalName.Pressed, selected);
-        var stable = await ConfirmDeckSelectionAsync(cardSelectScreen, TimeSpan.FromSeconds(10));
+        var stable = currentScreen switch
+        {
+            NCardGridSelectionScreen cardSelectScreen => await ConfirmDeckSelectionAsync(cardSelectScreen, TimeSpan.FromSeconds(10)),
+            NChooseACardSelectionScreen chooseCardScreen => await WaitForChooseCardSelectionResolutionAsync(chooseCardScreen, TimeSpan.FromSeconds(10)),
+            _ when GameStateService.TryGetCombatHandSelection(currentScreen, out _) => await WaitForCombatHandSelectionResolutionAsync(TimeSpan.FromSeconds(10)),
+            _ => false
+        };
 
         return new ActionResponsePayload
         {
@@ -996,6 +1002,44 @@ internal static class GameActionService
             message = stable ? "Action completed." : "Action queued but state is still transitioning.",
             state = GameStateService.BuildStatePayload()
         };
+    }
+
+    private static async Task<bool> WaitForChooseCardSelectionResolutionAsync(
+        NChooseACardSelectionScreen selectionScreen,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+            if (currentScreen is not NChooseACardSelectionScreen || !GodotObject.IsInstanceValid(selectionScreen))
+            {
+                return true;
+            }
+        }
+
+        return ActiveScreenContext.Instance.GetCurrentScreen() is not NChooseACardSelectionScreen;
+    }
+
+    private static async Task<bool> WaitForCombatHandSelectionResolutionAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+            if (!GameStateService.TryGetCombatHandSelection(currentScreen, out var currentHand) ||
+                currentHand == null ||
+                !GodotObject.IsInstanceValid(currentHand))
+            {
+                return true;
+            }
+        }
+
+        return !GameStateService.TryGetCombatHandSelection(ActiveScreenContext.Instance.GetCurrentScreen(), out _);
     }
 
     private static async Task<bool> DrainRewardFlowAsync(TimeSpan timeout)

@@ -1,4 +1,6 @@
+using System.Reflection;
 using Godot;
+using MegaCrit.Sts2.Core.CardSelection;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -13,6 +15,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
@@ -867,28 +870,92 @@ internal static class GameStateService
             .ToArray();
     }
 
-    public static IReadOnlyList<NGridCardHolder> GetDeckSelectionOptions(IScreenContext? currentScreen)
+    public static IReadOnlyList<NCardHolder> GetDeckSelectionOptions(IScreenContext? currentScreen)
     {
-        if (currentScreen is not NCardGridSelectionScreen cardSelectScreen)
+        if (currentScreen is NCardGridSelectionScreen cardSelectScreen)
         {
-            return Array.Empty<NGridCardHolder>();
+            return FindDescendants<NGridCardHolder>(cardSelectScreen)
+                .Where(node => GodotObject.IsInstanceValid(node) && node.CardModel != null)
+                .OrderBy(node => node.GlobalPosition.Y)
+                .ThenBy(node => node.GlobalPosition.X)
+                .Cast<NCardHolder>()
+                .ToArray();
         }
 
-        return FindDescendants<NGridCardHolder>(cardSelectScreen)
-            .Where(node => GodotObject.IsInstanceValid(node) && node.CardModel != null)
-            .OrderBy(node => node.GlobalPosition.Y)
-            .ThenBy(node => node.GlobalPosition.X)
-            .ToArray();
+        if (currentScreen is NChooseACardSelectionScreen chooseCardScreen)
+        {
+            return FindDescendants<NGridCardHolder>(chooseCardScreen)
+                .Where(node => GodotObject.IsInstanceValid(node) && node.CardModel != null)
+                .OrderBy(node => node.GlobalPosition.Y)
+                .ThenBy(node => node.GlobalPosition.X)
+                .Cast<NCardHolder>()
+                .ToArray();
+        }
+
+        if (TryGetCombatHandSelection(currentScreen, out var hand) && SupportsSingleCardCombatHandSelection(hand!))
+        {
+            return hand!.ActiveHolders
+                .Where(node => GodotObject.IsInstanceValid(node) && node.Visible && node.CardModel != null)
+                .OrderBy(node => node.GetIndex())
+                .Cast<NCardHolder>()
+                .ToArray();
+        }
+
+        return Array.Empty<NCardHolder>();
     }
 
     public static string? GetDeckSelectionPrompt(IScreenContext? currentScreen)
     {
-        if (currentScreen is not NCardGridSelectionScreen cardSelectScreen)
+        if (currentScreen is NCardGridSelectionScreen cardSelectScreen)
         {
-            return null;
+            return cardSelectScreen.GetNodeOrNull<MegaRichTextLabel>("%BottomLabel")?.Text;
         }
 
-        return cardSelectScreen.GetNodeOrNull<MegaRichTextLabel>("%BottomLabel")?.Text;
+        if (currentScreen is NChooseACardSelectionScreen chooseCardScreen)
+        {
+            return SafeReadString(() => chooseCardScreen.GetNodeOrNull<NCommonBanner>("Banner")?.label.Text);
+        }
+
+        if (TryGetCombatHandSelection(currentScreen, out var hand) && SupportsSingleCardCombatHandSelection(hand!))
+        {
+            return SafeReadString(() => hand!.GetNodeOrNull<MegaRichTextLabel>("%SelectionHeader")?.Text);
+        }
+
+        return null;
+    }
+
+    public static bool TryGetCombatHandSelection(IScreenContext? currentScreen, out NPlayerHand? hand)
+    {
+        hand = null;
+
+        if (currentScreen is not NCombatRoom combatRoom)
+        {
+            return false;
+        }
+
+        hand = combatRoom.Ui?.Hand;
+        return hand != null &&
+            GodotObject.IsInstanceValid(hand) &&
+            hand.IsInCardSelection &&
+            hand.CurrentMode is NPlayerHand.Mode.SimpleSelect or NPlayerHand.Mode.UpgradeSelect;
+    }
+
+    private static bool SupportsSingleCardCombatHandSelection(NPlayerHand hand)
+    {
+        var prefs = TryGetCombatHandSelectionPrefs(hand);
+        return prefs?.MaxSelect == 1;
+    }
+
+    private static CardSelectorPrefs? TryGetCombatHandSelectionPrefs(NPlayerHand hand)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var field = typeof(NPlayerHand).GetField("_prefs", flags);
+        if (field?.GetValue(hand) is CardSelectorPrefs prefs)
+        {
+            return prefs;
+        }
+
+        return null;
     }
 
     private static string SafeReadString(Func<string?> getter, string fallback = "")
@@ -1333,12 +1400,11 @@ internal static class GameStateService
 
     private static SelectionPayload? BuildSelectionPayload(IScreenContext? currentScreen)
     {
-        if (currentScreen is not NCardGridSelectionScreen)
+        var cards = GetDeckSelectionOptions(currentScreen);
+        if (cards.Count == 0)
         {
             return null;
         }
-
-        var cards = GetDeckSelectionOptions(currentScreen);
 
         return new SelectionPayload
         {
@@ -1347,6 +1413,10 @@ internal static class GameStateService
                 NDeckUpgradeSelectScreen => "deck_upgrade_select",
                 NDeckTransformSelectScreen => "deck_transform_select",
                 NDeckEnchantSelectScreen => "deck_enchant_select",
+                NChooseACardSelectionScreen => "choose_card_select",
+                _ when TryGetCombatHandSelection(currentScreen, out var hand) => hand!.CurrentMode == NPlayerHand.Mode.UpgradeSelect
+                    ? "combat_hand_upgrade_select"
+                    : "combat_hand_select",
                 _ => "deck_card_select"
             },
             prompt = GetDeckSelectionPrompt(currentScreen) ?? string.Empty,
@@ -2322,6 +2392,7 @@ internal static class GameStateService
         {
             NGameOverScreen => "GAME_OVER",
             NCardRewardSelectionScreen => "REWARD",
+            NChooseACardSelectionScreen => "CARD_SELECTION",
             NDeckCardSelectScreen or NDeckUpgradeSelectScreen or NDeckTransformSelectScreen or NDeckEnchantSelectScreen => "CARD_SELECTION",
             NRewardsScreen => "REWARD",
             NTreasureRoom or NTreasureRoomRelicCollection => "CHEST",
