@@ -34,7 +34,7 @@ README.md
 
 ## 快速开始
 
-详细的编译与环境流程请看：[build-and-env.md](/Users/mac46/CodeWorkSpace/STS2-Agent/build-and-env.md)。
+详细的编译与环境流程请看：[build-and-env.md](./build-and-env.md)。
 
 ### 1. 安装 Mod
 
@@ -217,7 +217,7 @@ export GODOT_BIN="/Applications/Godot.app/Contents/MacOS/Godot"
 ./scripts/build-mod.sh --configuration Release
 ```
 
-如果你更喜欢用 `local.props`，也可以从 [local.props.example](/Users/mac46/CodeWorkSpace/STS2-Agent/STS2AIAgent/local.props.example) 复制一份到 `STS2AIAgent/local.props`，填入你的 `Sts2DataDir`。现在项目也支持直接读取环境变量 `STS2_DATA_DIR`。
+如果你更喜欢用 `local.props`，也可以从 [local.props.example](./STS2AIAgent/local.props.example) 复制一份到 `STS2AIAgent/local.props`，填入你的 `Sts2DataDir`。现在项目也支持直接读取环境变量 `STS2_DATA_DIR`。
 
 ## MCP 客户端如何接
 
