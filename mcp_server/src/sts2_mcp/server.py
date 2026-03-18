@@ -170,7 +170,7 @@ _SCENE_FIELD_SETS: dict[str, dict[str, list[str]]] = {
     SCENE_EVENT: {
         "events": [
             "id",
-            "title",
+            "name",
             "description",
             "options",
         ],

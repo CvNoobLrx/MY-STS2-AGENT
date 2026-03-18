@@ -151,7 +151,7 @@ class GameDataToolsTests(unittest.TestCase):
         client = DummyClient(screen="MAIN_MENU")
         server = create_server(client=client)
         tool = asyncio.run(server.get_tool("get_relevant_game_data"))
-        event_item = {"id": "MYSTERY", "title": "Mystery Event"}
+        event_item = {"id": "MYSTERY", "name": "Mystery Event"}
 
         with patch("sts2_mcp.server._ensure_game_data_index", return_value={"MYSTERY": event_item}):
             with patch("sts2_mcp.server.get_game_data_items_fields") as get_game_data_items_fields_mock:
@@ -164,7 +164,7 @@ class GameDataToolsTests(unittest.TestCase):
         client = DummyClient(screen="COMBAT_REWARD")
         server = create_server(client=client)
         tool = asyncio.run(server.get_tool("get_relevant_game_data"))
-        event_item = {"id": "MYSTERY", "title": "Mystery Event"}
+        event_item = {"id": "MYSTERY", "name": "Mystery Event"}
 
         with patch("sts2_mcp.server._ensure_game_data_index", return_value={"MYSTERY": event_item}):
             with patch("sts2_mcp.server.get_game_data_items_fields") as get_game_data_items_fields_mock:
@@ -172,6 +172,32 @@ class GameDataToolsTests(unittest.TestCase):
 
         self.assertEqual(result, {"MYSTERY": event_item})
         get_game_data_items_fields_mock.assert_not_called()
+
+    def test_get_relevant_game_data_event_scene_keeps_name_field_from_real_schema(self) -> None:
+        client = DummyClient(screen="EVENT_ROOM")
+        server = create_server(client=client)
+        tool = asyncio.run(server.get_tool("get_relevant_game_data"))
+        event_item = {
+            "id": "MYSTERY",
+            "name": "Mystery Event",
+            "description": "A strange encounter.",
+            "options": [{"id": "LEAVE"}],
+            "type": "Event",
+        }
+
+        with patch("sts2_mcp.server._ensure_game_data_index", return_value={"MYSTERY": event_item}):
+            result = tool.fn(collection="events", item_ids="MYSTERY")
+
+        self.assertEqual(
+            result["MYSTERY"],
+            {
+                "id": "MYSTERY",
+                "name": "Mystery Event",
+                "description": "A strange encounter.",
+                "options": [{"id": "LEAVE"}],
+            },
+        )
+        self.assertNotIn("title", result["MYSTERY"])
 
     def test_get_game_data_items_fields_filters_fields(self) -> None:
         with patch(
